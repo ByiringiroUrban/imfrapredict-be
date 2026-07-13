@@ -11,7 +11,7 @@ from app.api.deps import get_session
 from app.core.enums import RiskStatus, StructureType, SensorType, MaintenancePriority, MaintenanceStatus, risk_status_from_score
 from app.models import RiskAssessment, Structure, Inspection, MaintenancePlan, EnvironmentalReading, Organization, Sensor, SensorReading
 from app.schemas.common import PaginatedResponse
-from app.schemas.structure import StructureDetail, StructureListItem, StructureCreate
+from app.schemas.structure import StructureDetail, StructureListItem, StructureCreate, StructureUpdate
 from app.services.structure_service import structure_to_detail, structure_to_list_item
 from app.services.prediction_service import predict_infrastructure_risk
 from app.services.mesh_generator import generate_mesh_from_image_path
@@ -311,8 +311,13 @@ async def upload_structure_images(
     files: list[UploadFile] = File(...),
     session: AsyncSession = Depends(get_session)
 ):
-    structure = await session.get(Structure, structure_id)
-    if not structure or not structure.is_active:
+    result = await session.execute(
+        select(Structure)
+        .options(selectinload(Structure.sensors))
+        .where(Structure.id == structure_id, Structure.is_active.is_(True))
+    )
+    structure = result.scalar_one_or_none()
+    if not structure:
         raise HTTPException(status_code=404, detail="Structure not found")
 
     # Ensure uploads directory exists
@@ -486,4 +491,61 @@ async def analyze_image(
         "confidence": confidence,
         "factors": factors
     }
+
+@router.put("/{structure_id}", response_model=StructureListItem)
+async def update_structure(
+    structure_id: UUID,
+    data: StructureUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> StructureListItem:
+    structure = await session.get(Structure, structure_id)
+    if not structure or not structure.is_active:
+        raise HTTPException(status_code=404, detail="Structure not found")
+
+    if data.name is not None:
+        if data.name != structure.name:
+            stmt = select(Structure).where(
+                Structure.organization_id == structure.organization_id,
+                Structure.name == data.name,
+                Structure.is_active.is_(True)
+            )
+            existing = (await session.execute(stmt)).scalar_one_or_none()
+            if existing:
+                raise HTTPException(status_code=400, detail="A structure with this name already exists")
+        structure.name = data.name
+
+    if data.structure_type is not None:
+        structure.structure_type = data.structure_type
+    if data.built_year is not None:
+        structure.built_year = data.built_year
+    if data.location_lat is not None:
+        structure.location_lat = data.location_lat
+    if data.location_lng is not None:
+        structure.location_lng = data.location_lng
+    if data.location_description is not None:
+        structure.location_description = data.location_description
+    
+    if data.metadata is not None:
+        from sqlalchemy.orm.attributes import flag_modified
+        meta = structure.metadata_ or {}
+        meta.update(data.metadata)
+        structure.metadata_ = meta
+        flag_modified(structure, "metadata_")
+
+    await session.commit()
+    await session.refresh(structure)
+    return StructureListItem(**structure_to_list_item(structure))
+
+@router.delete("/{structure_id}")
+async def delete_structure(
+    structure_id: UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    structure = await session.get(Structure, structure_id)
+    if not structure or not structure.is_active:
+        raise HTTPException(status_code=404, detail="Structure not found")
+
+    structure.is_active = False
+    await session.commit()
+    return {"success": True}
 
