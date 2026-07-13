@@ -305,10 +305,10 @@ async def recalculate_risk(
     }
 
 
-@router.post("/{structure_id}/image", response_model=StructureDetail)
-async def upload_structure_image(
+@router.post("/{structure_id}/images", response_model=StructureDetail)
+async def upload_structure_images(
     structure_id: UUID,
-    file: UploadFile = File(...),
+    files: list[UploadFile] = File(...),
     session: AsyncSession = Depends(get_session)
 ):
     structure = await session.get(Structure, structure_id)
@@ -319,19 +319,27 @@ async def upload_structure_image(
     uploads_dir = Path("uploads")
     uploads_dir.mkdir(exist_ok=True)
 
-    # Generate unique filename
-    file_extension = file.filename.split('.')[-1] if '.' in file.filename else 'jpg'
-    filename = f"{structure_id}_{uuid.uuid4().hex[:8]}.{file_extension}"
-    file_path = uploads_dir / filename
-
-    # Save file
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
     from sqlalchemy.orm.attributes import flag_modified
-    # Update metadata
     meta = structure.metadata_ or {}
-    meta["image_url"] = f"/uploads/{filename}"
+    image_urls = meta.get("image_urls", [])
+
+    for file in files:
+        # Generate unique filename
+        file_extension = file.filename.split('.')[-1] if '.' in file.filename else 'jpg'
+        filename = f"{structure_id}_{uuid.uuid4().hex[:8]}.{file_extension}"
+        file_path = uploads_dir / filename
+
+        # Save file
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        image_urls.append(f"/uploads/{filename}")
+
+    # Update metadata
+    meta["image_urls"] = image_urls
+    if image_urls and "image_url" not in meta:
+        meta["image_url"] = image_urls[0]
+        
     structure.metadata_ = meta
     flag_modified(structure, "metadata_")
     
