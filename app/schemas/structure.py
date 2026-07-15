@@ -21,12 +21,13 @@ class StructureListItem(ORMModel):
     last_assessed_at: datetime | None = None
     location_lat: float | None = None
     location_lng: float | None = None
+    created_by: UUID | None = None
     metadata: dict = Field(default_factory=dict)
-
 
 class StructureDetail(StructureListItem):
     risk_factors: dict = Field(default_factory=dict)
     sensor_count: int = 0
+    metadata: dict = Field(default_factory=dict)
 
 
 class StructureCreate(BaseModel):
@@ -37,5 +38,14 @@ class StructureCreate(BaseModel):
     location_lat: float | None = None
     location_lng: float | None = None
     location_description: str | None = None
+    created_by: UUID | None = None
     metadata: dict = Field(default_factory=dict)
 
+class StructureUpdate(BaseModel):
+    name: str | None = None
+    structure_type: StructureType | None = None
+    built_year: int | None = None
+    location_lat: float | None = None
+    location_lng: float | None = None
+    location_description: str | None = None
+    metadata: dict | None = None

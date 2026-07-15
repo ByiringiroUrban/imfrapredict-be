@@ -25,9 +25,9 @@ def structure_to_list_item(structure: Structure) -> dict:
         "last_assessed_at": structure.last_assessed_at,
         "location_lat": float(structure.location_lat) if structure.location_lat is not None else None,
         "location_lng": float(structure.location_lng) if structure.location_lng is not None else None,
+        "created_by": structure.metadata_.get("created_by") if structure.metadata_ else None,
         "metadata": structure.metadata_ or {},
     }
-
 
 def structure_to_detail(structure: Structure, latest_assessment: RiskAssessment | None = None) -> dict:
     data = structure_to_list_item(structure)
@@ -35,6 +35,7 @@ def structure_to_detail(structure: Structure, latest_assessment: RiskAssessment 
         {
             "risk_factors": latest_assessment.factors if latest_assessment else {},
             "sensor_count": len(structure.sensors) if structure.sensors else 0,
+            "metadata": structure.metadata_ or {},
         }
     )
     return data

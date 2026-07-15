@@ -1,4 +1,3 @@
-import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -23,9 +22,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-os.makedirs("uploads", exist_ok=True)
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -36,3 +32,5 @@ app.add_middleware(
 
 app.include_router(api_router, prefix="/api/v1")
 
+# Mount uploads directory to serve images statically
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")

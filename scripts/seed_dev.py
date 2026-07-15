@@ -2,8 +2,18 @@
 
 import asyncio
 import uuid
+<<<<<<< HEAD
 from datetime import datetime, timedelta, timezone, date
 
+=======
+import sys
+import os
+from datetime import datetime, timedelta, timezone, date
+
+# Add parent directory to sys.path to resolve 'app' package
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+>>>>>>> 8b1ba381f6b43ed333b73d31dcfb8a40ce68933e
 from sqlalchemy import delete, select
 
 from app.core.database import async_session_factory
@@ -187,13 +197,21 @@ async def seed() -> None:
             org.slug = "kigali-city"
 
         # Check if admin user exists
+<<<<<<< HEAD
         admin_email = "admin@infrapredict.ai"
+=======
+        admin_email = "admin@gmail.com"
+>>>>>>> 8b1ba381f6b43ed333b73d31dcfb8a40ce68933e
         stmt = select(User).where(User.email == admin_email)
         admin_res = (await session.execute(stmt)).scalar_one_or_none()
         if not admin_res:
             admin = User(
                 email=admin_email,
+<<<<<<< HEAD
                 password_hash=hash_password("password"),
+=======
+                password_hash=hash_password("12345678"),
+>>>>>>> 8b1ba381f6b43ed333b73d31dcfb8a40ce68933e
                 full_name="Alex Rivera",
                 role=UserRole.ADMIN,
             )
@@ -201,6 +219,33 @@ async def seed() -> None:
         else:
             admin = admin_res
 
+<<<<<<< HEAD
+=======
+        # Seed Operator user
+        operator_email = "operator@gmail.com"
+        stmt = select(User).where(User.email == operator_email)
+        if not (await session.execute(stmt)).scalar_one_or_none():
+            session.add(User(
+                email=operator_email,
+                password_hash=hash_password("12345678"),
+                full_name="Jordan Chen",
+                role=UserRole.OPERATOR,
+            ))
+            print("  [OK] Operator user created")
+
+        # Seed Viewer user
+        viewer_email = "viewer@gmail.com"
+        stmt = select(User).where(User.email == viewer_email)
+        if not (await session.execute(stmt)).scalar_one_or_none():
+            session.add(User(
+                email=viewer_email,
+                password_hash=hash_password("12345678"),
+                full_name="Sam Patel",
+                role=UserRole.VIEWER,
+            ))
+            print("  [OK] Viewer user created")
+
+>>>>>>> 8b1ba381f6b43ed333b73d31dcfb8a40ce68933e
         # Clear existing structure-related data to allow clean re-seeding
         # Let's delete records tied to this organization's structures
         stmt_structs = select(Structure.id).where(Structure.organization_id == DEMO_ORG_ID)
@@ -212,9 +257,15 @@ async def seed() -> None:
                 select(Sensor.id).where(Sensor.structure_id.in_(struct_ids))
             )))
             await session.execute(delete(Sensor).where(Sensor.structure_id.in_(struct_ids)))
+<<<<<<< HEAD
             await session.execute(delete(RiskAssessment).where(RiskAssessment.structure_id.in_(struct_ids)))
             await session.execute(delete(Inspection).where(Inspection.structure_id.in_(struct_ids)))
             await session.execute(delete(MaintenancePlan).where(MaintenancePlan.structure_id.in_(struct_ids)))
+=======
+            await session.execute(delete(MaintenancePlan).where(MaintenancePlan.structure_id.in_(struct_ids)))
+            await session.execute(delete(RiskAssessment).where(RiskAssessment.structure_id.in_(struct_ids)))
+            await session.execute(delete(Inspection).where(Inspection.structure_id.in_(struct_ids)))
+>>>>>>> 8b1ba381f6b43ed333b73d31dcfb8a40ce68933e
             await session.execute(delete(EnvironmentalReading).where(EnvironmentalReading.structure_id.in_(struct_ids)))
             await session.execute(delete(Structure).where(Structure.id.in_(struct_ids)))
             await session.flush()
@@ -328,7 +379,11 @@ async def seed() -> None:
         print(f"  Organization:    Kigali City Infrastructure Board")
         print(f"  Structures:      {len(STRUCTURES)}")
         print(f"  Sensor readings: {total_readings}")
+<<<<<<< HEAD
         print(f"  Admin login:     admin@infrapredict.ai / password")
+=======
+        print(f"  Admin login:     admin@gmail.com / 12345678")
+>>>>>>> 8b1ba381f6b43ed333b73d31dcfb8a40ce68933e
 
 
 if __name__ == "__main__":

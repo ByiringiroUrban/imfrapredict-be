@@ -115,6 +115,7 @@ The backend is **implemented** with core endpoints, database migrations, and see
 
 **Quick start after PostgreSQL is running:**
 
+
 ```bash
 cd backend
 python -m venv .venv

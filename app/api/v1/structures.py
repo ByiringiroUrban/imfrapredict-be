@@ -11,9 +11,10 @@ from app.api.deps import get_session
 from app.core.enums import RiskStatus, StructureType, SensorType, MaintenancePriority, MaintenanceStatus, risk_status_from_score
 from app.models import RiskAssessment, Structure, Inspection, MaintenancePlan, EnvironmentalReading, Organization, Sensor, SensorReading
 from app.schemas.common import PaginatedResponse
-from app.schemas.structure import StructureDetail, StructureListItem, StructureCreate
+from app.schemas.structure import StructureDetail, StructureListItem, StructureCreate, StructureUpdate
 from app.services.structure_service import structure_to_detail, structure_to_list_item
 from app.services.prediction_service import predict_infrastructure_risk
+from app.services.mesh_generator import generate_mesh_from_image_path
 from app.services.cnn_service import detect_visual_defects
 
 
@@ -33,6 +34,7 @@ def _parse_sort(sort: str) -> tuple[str, bool]:
 @router.get("", response_model=PaginatedResponse[StructureListItem])
 async def list_structures(
     organization_id: UUID | None = None,
+    created_by: UUID | None = None,
     status: RiskStatus | None = None,
     structure_type: StructureType | None = None,
     search: str | None = None,
@@ -45,6 +47,8 @@ async def list_structures(
 
     if organization_id:
         query = query.where(Structure.organization_id == organization_id)
+    if created_by:
+        query = query.where(Structure.metadata_["created_by"].astext == str(created_by))
     if status:
         query = query.where(Structure.current_status == status)
     if structure_type:
@@ -91,6 +95,10 @@ async def create_structure(
     if existing:
         raise HTTPException(status_code=400, detail="A structure with this name already exists")
 
+    meta = data.metadata or {}
+    if data.created_by:
+        meta["created_by"] = str(data.created_by)
+
     # 3. Create Structure
     structure = Structure(
         organization_id=data.organization_id,
@@ -103,7 +111,7 @@ async def create_structure(
         current_risk_score=10,
         current_status=RiskStatus.NORMAL,
         last_assessed_at=datetime.utcnow(),
-        metadata_=data.metadata or {}
+        metadata_=meta
     )
     session.add(structure)
     await session.flush()
@@ -155,6 +163,42 @@ async def create_structure(
     
     return StructureListItem(**structure_to_list_item(structure))
 
+
+import shutil
+import os
+from pathlib import Path
+
+@router.post("/preview-mesh")
+async def preview_structure_mesh(
+    file: UploadFile = File(...)
+):
+    # Ensure uploads directory exists
+    uploads_dir = Path("uploads")
+    uploads_dir.mkdir(exist_ok=True)
+
+    # Generate unique filename for temp preview
+    file_extension = file.filename.split('.')[-1] if '.' in file.filename else 'jpg'
+    temp_id = uuid.uuid4().hex[:8]
+    filename = f"preview_{temp_id}.{file_extension}"
+    image_path = uploads_dir / filename
+
+    # Save file
+    with open(image_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # Generate OBJ
+    obj_filename = f"preview_{temp_id}.obj"
+    obj_path = uploads_dir / obj_filename
+    
+    success = generate_mesh_from_image_path(str(image_path), str(obj_path))
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to generate 3D mesh")
+
+    return {
+        "success": True, 
+        "image_url": f"/uploads/{filename}",
+        "mesh_url": f"/uploads/{obj_filename}"
+    }
 
 @router.get("/{structure_id}", response_model=StructureDetail)
 async def get_structure(
@@ -261,6 +305,93 @@ async def recalculate_risk(
     }
 
 
+@router.post("/{structure_id}/images", response_model=StructureDetail)
+async def upload_structure_images(
+    structure_id: UUID,
+    files: list[UploadFile] = File(...),
+    session: AsyncSession = Depends(get_session)
+):
+    result = await session.execute(
+        select(Structure)
+        .options(selectinload(Structure.sensors))
+        .where(Structure.id == structure_id, Structure.is_active.is_(True))
+    )
+    structure = result.scalar_one_or_none()
+    if not structure:
+        raise HTTPException(status_code=404, detail="Structure not found")
+
+    # Ensure uploads directory exists
+    uploads_dir = Path("uploads")
+    uploads_dir.mkdir(exist_ok=True)
+
+    from sqlalchemy.orm.attributes import flag_modified
+    meta = structure.metadata_ or {}
+    image_urls = meta.get("image_urls", [])
+
+    for file in files:
+        # Generate unique filename
+        file_extension = file.filename.split('.')[-1] if '.' in file.filename else 'jpg'
+        filename = f"{structure_id}_{uuid.uuid4().hex[:8]}.{file_extension}"
+        file_path = uploads_dir / filename
+
+        # Save file
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        image_urls.append(f"/uploads/{filename}")
+
+    # Update metadata
+    meta["image_urls"] = image_urls
+    if image_urls and "image_url" not in meta:
+        meta["image_url"] = image_urls[0]
+        
+    structure.metadata_ = meta
+    flag_modified(structure, "metadata_")
+    
+    await session.commit()
+    return structure_to_detail(structure)
+
+
+@router.post("/{structure_id}/generate-mesh")
+async def generate_structure_mesh(
+    structure_id: UUID,
+    session: AsyncSession = Depends(get_session)
+):
+    structure = await session.get(Structure, structure_id)
+    if not structure or not structure.is_active:
+        raise HTTPException(status_code=404, detail="Structure not found")
+
+    meta = structure.metadata_ or {}
+    image_url = meta.get("image_url")
+    if not image_url:
+        raise HTTPException(status_code=400, detail="No image attached to structure")
+
+    # Assuming image_url is like "/uploads/xxx.jpg", extract filename
+    filename = image_url.split("/")[-1]
+    image_path = Path("uploads") / filename
+    
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail="Image file not found on server")
+
+    # Generate OBJ
+    obj_filename = f"{structure_id}_{uuid.uuid4().hex[:8]}.obj"
+    obj_path = Path("uploads") / obj_filename
+    
+    success = generate_mesh_from_image_path(str(image_path), str(obj_path))
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to generate 3D mesh")
+
+    # Update metadata
+    from sqlalchemy.orm.attributes import flag_modified
+    meta["mesh_url"] = f"/uploads/{obj_filename}"
+    structure.metadata_ = meta
+    flag_modified(structure, "metadata_")
+    
+    await session.commit()
+    
+    return {"success": True, "mesh_url": meta["mesh_url"]}
+
+
 @router.post("/{structure_id}/analyze-image")
 async def analyze_image(
     structure_id: UUID,
@@ -361,41 +492,49 @@ async def analyze_image(
         "factors": factors
     }
 
-
 @router.put("/{structure_id}", response_model=StructureListItem)
 async def update_structure(
     structure_id: UUID,
-    data: StructureCreate,
+    data: StructureUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> StructureListItem:
     structure = await session.get(Structure, structure_id)
     if not structure or not structure.is_active:
         raise HTTPException(status_code=404, detail="Structure not found")
 
-    # Check if the name already exists in the same organization for a DIFFERENT structure
-    stmt = select(Structure).where(
-        Structure.organization_id == data.organization_id,
-        Structure.name == data.name,
-        Structure.id != structure_id,
-        Structure.is_active.is_(True)
-    )
-    existing = (await session.execute(stmt)).scalar_one_or_none()
-    if existing:
-        raise HTTPException(status_code=400, detail="A structure with this name already exists")
+    if data.name is not None:
+        if data.name != structure.name:
+            stmt = select(Structure).where(
+                Structure.organization_id == structure.organization_id,
+                Structure.name == data.name,
+                Structure.is_active.is_(True)
+            )
+            existing = (await session.execute(stmt)).scalar_one_or_none()
+            if existing:
+                raise HTTPException(status_code=400, detail="A structure with this name already exists")
+        structure.name = data.name
 
-    structure.name = data.name
-    structure.structure_type = data.structure_type
-    structure.built_year = data.built_year
-    structure.location_lat = data.location_lat
-    structure.location_lng = data.location_lng
-    structure.location_description = data.location_description
-    structure.metadata_ = data.metadata or {}
+    if data.structure_type is not None:
+        structure.structure_type = data.structure_type
+    if data.built_year is not None:
+        structure.built_year = data.built_year
+    if data.location_lat is not None:
+        structure.location_lat = data.location_lat
+    if data.location_lng is not None:
+        structure.location_lng = data.location_lng
+    if data.location_description is not None:
+        structure.location_description = data.location_description
+    
+    if data.metadata is not None:
+        from sqlalchemy.orm.attributes import flag_modified
+        meta = structure.metadata_ or {}
+        meta.update(data.metadata)
+        structure.metadata_ = meta
+        flag_modified(structure, "metadata_")
 
     await session.commit()
     await session.refresh(structure)
-    
     return StructureListItem(**structure_to_list_item(structure))
-
 
 @router.delete("/{structure_id}")
 async def delete_structure(
@@ -408,54 +547,5 @@ async def delete_structure(
 
     structure.is_active = False
     await session.commit()
-
     return {"success": True}
-
-
-@router.post("/{structure_id}/images", response_model=StructureListItem)
-async def upload_images(
-    structure_id: UUID,
-    files: list[UploadFile] = File(...),
-    session: AsyncSession = Depends(get_session),
-) -> StructureListItem:
-    import os
-    import shutil
-    from sqlalchemy.orm.attributes import flag_modified
-
-    structure = await session.get(Structure, structure_id)
-    if not structure or not structure.is_active:
-        raise HTTPException(status_code=404, detail="Structure not found")
-
-    new_urls = []
-    os.makedirs("uploads", exist_ok=True)
-
-    for file in files:
-        ext = os.path.splitext(file.filename)[1] if file.filename else ".jpg"
-        filename = f"{uuid.uuid4()}{ext}"
-        filepath = os.path.join("uploads", filename)
-
-        with open(filepath, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
-        new_urls.append(f"/uploads/{filename}")
-
-    metadata = dict(structure.metadata_ or {})
-    image_urls = metadata.get("image_urls", [])
-    if not isinstance(image_urls, list):
-        image_urls = [image_urls] if image_urls else []
-    image_urls.extend(new_urls)
-    metadata["image_urls"] = image_urls
-    
-    if not metadata.get("image_url") and new_urls:
-        metadata["image_url"] = new_urls[0]
-
-    structure.metadata_ = metadata
-    flag_modified(structure, "metadata_")
-
-    await session.commit()
-    await session.refresh(structure)
-
-    return StructureListItem(**structure_to_list_item(structure))
-
-
 
