@@ -35,8 +35,8 @@ class StructureCreate(BaseModel):
     name: str
     structure_type: StructureType
     built_year: int | None = None
-    location_lat: float | None = None
-    location_lng: float | None = None
+    location_lat: float | None = Field(None, ge=-90.0, le=90.0)
+    location_lng: float | None = Field(None, ge=-180.0, le=180.0)
     location_description: str | None = None
     created_by: UUID | None = None
     metadata: dict = Field(default_factory=dict)
@@ -45,7 +45,7 @@ class StructureUpdate(BaseModel):
     name: str | None = None
     structure_type: StructureType | None = None
     built_year: int | None = None
-    location_lat: float | None = None
-    location_lng: float | None = None
+    location_lat: float | None = Field(None, ge=-90.0, le=90.0)
+    location_lng: float | None = Field(None, ge=-180.0, le=180.0)
     location_description: str | None = None
     metadata: dict | None = None
